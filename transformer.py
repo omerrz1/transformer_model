@@ -9,15 +9,32 @@ import keras
 
 # positinal aware word embedding layer 
 class Positional_embedding(keras.layers.Layer):
+    # attributes = sequence length , embedded dim and vocab size
     def __init__(self,seqeunce_length , embd_dim , vocab_sie, **kwargs):
         super().__init__(**kwargs)
         self.vocab_size = vocab_sie
         self.embd_dim = embd_dim
         self.sequence_length = seqeunce_length
-
-        # define embeeding layer and the posetional encoding layer 
         
+        # defining embedding layer 
+        self.token_embedding_layer = keras.layers.Embedding(
+            input_dim=self.vocab_size,
+            output_dim=self.embd_dim
+        )
+        # positiona encoding layer 
+        self.positional_encoding = keras.layers.Embedding(
+            input_dim=self.sequence_length,
+            output_dim=self.embd_dim
+        )
 
+    #  the call function makaes use of all the layers we dfined above
+    def call(self,inputs):
+        length = tf.shape(inputs) [-1] # takes the sequence length of the input for example (10 , 60) 60 = seqeunce length 
+        positions = tf.range(start=0,limit=length-1,delta=1) # creates a tensor with the same length as the sequence length we extacted above , with delta = 1 (step size = 1) example [1,2,3,..,length-1]
+        embedded_tokens = self.token_embedding_layer(inputs) # passing the inputs to an embedding layer to generate embedding representations 
+        embedded_positions = self.positional_encoding(positions)  # passing the positions tensor we generated above into the positinonal encoding layer 
+        positions_aware_embeddings = embedded_tokens + embedded_positions #adding positional encoding with the embedding representations 
+        return positions_aware_embeddings
 
 # transformer encoder layer
 class Transformer_encoder(keras.layers.Layer): # we inherit from keras layer class to make it a layer 
