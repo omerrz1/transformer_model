@@ -4,6 +4,28 @@ import keras
 
 
 
+# create a class for data  proccessing
+class DataProcessor():
+    # make it one input 
+    def __init__(self, inputs):
+        self.inputs = inputs
+        self.eos = '[end]'
+        self.sos ='[start]'
+
+    def tokens(self):
+        inputs = self.inputs
+        inp_tokens = [sentence.split(' ') for sentence in inputs if sentence]
+        return inp_tokens
+
+    def create_vocab(self,tokens):
+        words = set()
+        for seq in tokens:
+            for word in seq:
+                if word not in words:
+                    words.add(word)
+        self.vocab = {w:i for i,w in enumerate(words)}
+        self.vocab_size = len(self.vocab.items())
+        return self.vocab
 
 
 
@@ -83,3 +105,77 @@ class Transformer_encoder(keras.layers.Layer): # we inherit from keras layer cla
         
         return encoder_ouput
     
+
+
+
+class Transformer_Decoder(keras.layers.Layer):
+    def __init__(self,latent_dim,embd_dim,num_heads,**kwargs):
+        super().__init__(**kwargs)
+        self.latent_dim = latent_dim
+        self.embd_dim = embd_dim
+        self.numm_heads = num_heads
+
+        self.attention_1 = keras.layers.MultiHeadAttention(
+            num_heads=self.numm_heads,
+            key_dim=embd_dim)
+        
+        self.attention_2 = keras.layers.MultiHeadAttention(
+            num_heads=self.numm_heads,
+            key_dim=self.embd_dim
+        )
+
+        self.fully_conncted  = keras.Sequential(
+            [
+                keras.layers.Dense(units=self.latent_dim,activation='relu'),
+                keras.layers.Dense(units=self.embd_dim)
+            ]
+        )
+
+        self.add_and_norm_1 = keras.layers.LayerNormalization()
+        self.add_and_norm_2 = keras.layers.LayerNormalization()
+        self.add_and_norm_3 = keras.layers.LayerNormalization()
+
+        self.supports_masking = True
+
+
+        def call(self,inputs,encoder_ouput,mask=None):
+            causal_mask = self.get_causal_attention_mask(inputs)
+            if mask is not None:
+                padding_mask = tf.cast(mask[:,tf.newaxis,:])
+                padding_mask = tf.minimum(padding_mask,causal_mask)
+            
+            attention_1_output = self.attention_1(key=inputs , query=inputs , value=inputs , mask = causal_mask)
+
+            addAndNormOut_1 = self.add_and_norm_1(inputs+attention_1_output)
+            
+            attention_2_output = self.attention_2(query = addAndNormOut_1, key = encoder_ouput, value = encoder_ouput, mask = padding_mask)
+
+            addAndNormOut_2 = self.add_and_norm_2(addAndNormOut_1,attention_2_output)
+
+            fully_connected_ouput = self.fully_conncted(addAndNormOut_2)
+
+            decoder_ouput = self.add_and_norm_3(addAndNormOut_2+fully_connected_ouput)
+
+            return decoder_ouput
+        def get_causal_attention_mask(self, inputs):
+            input_shape = tf.shape(inputs)
+            batch_size, sequence_length = input_shape[0], input_shape[1]
+            i = tf.range(sequence_length)[:, tf.newaxis]
+            j = tf.range(sequence_length)
+            mask = tf.cast(i >= j, dtype="int32")
+            mask = tf.reshape(mask, (1, input_shape[1], input_shape[1]))
+            mult = tf.concat(
+                [tf.expand_dims(batch_size, -1), tf.constant([1, 1], dtype=tf.int32)],
+                axis=0,
+            )
+            return tf.tile(mask, mult)
+        
+
+
+
+
+
+inputs = ['ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we',]
+
+dp = DataProcessor(inputs=inputs)
+print(dp.tokens())
