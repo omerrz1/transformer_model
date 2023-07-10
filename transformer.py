@@ -1,31 +1,64 @@
 import tensorflow as tf
 import keras
+import numpy as np
 
 
 
 
 # create a class for data  proccessing
 class DataProcessor():
-    # make it one input 
-    def __init__(self, inputs):
+# fix the eos and sos tokens after padding 
+    def __init__(self, inputs, eos_sos_token=False, max_len=None):
         self.inputs = inputs
         self.eos = '[end]'
         self.sos ='[start]'
+        self.eos_sos_token = eos_sos_token
+        self.max_len = max_len
+        self.sequences = None
 
-    def tokens(self):
+    def gen_tokens(self):
         inputs = self.inputs
+        if self.eos_sos_token:
+            inputs = [f'{self.sos} {inp} {self.eos}' for inp in inputs]
         inp_tokens = [sentence.split(' ') for sentence in inputs if sentence]
+        self.tokens = inp_tokens
         return inp_tokens
 
-    def create_vocab(self,tokens):
+    def create_vocab(self):
         words = set()
-        for seq in tokens:
+        for seq in self.tokens:
             for word in seq:
                 if word not in words:
                     words.add(word)
-        self.vocab = {w:i for i,w in enumerate(words)}
+        self.vocab = {w:i+1 for i,w in enumerate(words)}
+        self.vocab['[PAD]'] = 0
         self.vocab_size = len(self.vocab.items())
         return self.vocab
+    
+    def gen_sequences(self,):
+        self.sequences = [[self.vocab[token] for token in seq] for seq in self.tokens]
+        return self.sequences
+    
+    def pad_seq(self):
+        if self.max_len is None:
+            self.max_len = max([len(seq)for seq in self.sequences])
+        padded_seqs = []
+        for seq in self.sequences:
+            padded_array = np.zeros(self.max_len)
+            padded_array[:len(seq)] = seq[:self.max_len]
+            padded_seqs.append(padded_array)
+        return np.array(padded_seqs)
+    
+    def fullyProccess(self):
+        self.gen_tokens()
+        self.create_vocab()
+        self.gen_sequences()
+        return self.pad_seq()
+
+
+
+
+
 
 
 
@@ -174,8 +207,8 @@ class Transformer_Decoder(keras.layers.Layer):
 
 
 
+inputs = ['ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne webthis sould now be thee longest one out of all of them','ehloewbf dbbwe hhw fbbewfj weifne we',]
 
-inputs = ['ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we',]
-
-dp = DataProcessor(inputs=inputs)
-print(dp.tokens())
+dp = DataProcessor(inputs=inputs,eos_sos_token=True,max_len=5)
+print(dp.fullyProccess())
+print(dp.gen_sequences())
