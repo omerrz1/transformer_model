@@ -1,12 +1,11 @@
 import re
 import pickle
-import tensorflow as tf
-import keras
 import numpy as np
+import keras
+import tensorflow as tf
 from keras import layers
 from keras.layers import TextVectorization
-from keras.preprocessing.sequence import pad_sequences
-from keras.preprocessing.text import Tokenizer
+
 
 
 
@@ -24,7 +23,8 @@ class DataProcessor():
 
         # cleaning data: 
         self.inputs = self.custom_standardization(inputs) if remove_input_punc else inputs
-        self.targets = self.custom_standardization(targets) if remove_target_punc else targets
+        self.targets = [f'[start] {sentence} [end]' for sentence in targets]
+        self.targets = self.custom_standardization(targets) if remove_target_punc else self.targets
         
         # creating vvectorisers 
         self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen)
@@ -266,38 +266,31 @@ class Transformer():
 
 # methods 
     @classmethod
-    def answer(cls,inpu_seq,model,inp_vocab,tar_vocab,max_len):
-        vectorised_input = inpu_seq.split(' ')
-        print('split inp:',vectorised_input)
-        vectorised_input = [inp_vocab.get(word,0) for word in vectorised_input if word]
-        print(vectorised_input)
-        vectorised_input = pad_sequences([vectorised_input],maxlen=max_len,padding='post')
-        print(vectorised_input)
-        reversed_tar_vocab = {i:w for w,i in tar_vocab.items()}
-        decoded_sentence = '[start]'
-        
-        for i in range(max_len):
-            vectorised_target_sentence = decoded_sentence.split(' ')
-            vectorised_target_sentence = [tar_vocab.get(word,0) for word in vectorised_target_sentence if word]
-            print('decoded',vectorised_target_sentence)
-            vectorised_target_sentence = pad_sequences([vectorised_target_sentence],max_len,padding='post')
+    def answer(input_sentence,maxlen,input_vectoriser,target__vectoriser,model):
 
-            predictions = model([vectorised_input,vectorised_target_sentence])
-            print('predictions: ', predictions)
-            predicted_token = np.argmax(predictions[0, i, :])
-            print(predicted_token)
-            word = reversed_tar_vocab.get(predicted_token, 'UNK')
-            decoded_sentence += " "+ word
+        targ_vocab = target__vectoriser.get_vocabulary()
+        targ_index_lookup = dict(zip(range(len(targ_vocab)), targ_vocab))
 
-            if word =='[end]':
+        tokenized_input_sentence = input_vectoriser([input_sentence])
+        decoded_sentence = "[start]"
+
+        for i in range(maxlen):
+            tokenized_target_sentence = target__vectoriser([decoded_sentence])[:, :-1]
+            predictions = model([tokenized_input_sentence, tokenized_target_sentence])
+
+            sampled_token_index = np.argmax(predictions[0, i, :])
+            sampled_token = targ_index_lookup[sampled_token_index]
+            decoded_sentence += " " + sampled_token
+
+            if sampled_token == "[end]":
                 break
-        return(decoded_sentence)
+        return decoded_sentence
 
     @classmethod
-    def Chat(cls,model,inp_vocab,tar_vocab,max_len):
+    def Chat(cls,maxlen,input_vectoriser,target__vectoriser,model):
         while True:
             user_message = input('------>')
-            print('model==>',cls.answer(user_message,model,inp_vocab,tar_vocab,max_len))
+            print('model ==>',cls.answer(user_message,maxlen,input_vectoriser,target__vectoriser,model))
 
     @classmethod
     def load_transformer(cls,name):
