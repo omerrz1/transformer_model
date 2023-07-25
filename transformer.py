@@ -1,61 +1,87 @@
+import re
+import pickle
 import tensorflow as tf
 import keras
 import numpy as np
-
+from keras import layers
+from keras.layers import TextVectorization
+from keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.text import Tokenizer
 
 
 
 # create a class for data  proccessing
 class DataProcessor():
-# fix the eos and sos tokens after padding 
-    def __init__(self, inputs, eos_sos_token=False, max_len=None):
-        self.inputs = inputs
-        self.eos = '[end]'
-        self.sos ='[start]'
-        self.eos_sos_token = eos_sos_token
-        self.max_len = max_len
-        self.sequences = None
+    def __init__(self,inputs,targets,maxlen = None, remove_input_punc= False, remove_target_punc = False ):
+        
+        if maxlen is None:
+            inpmaxlen = max([len(item) for item in inputs])
+            tarmaxlen = max([len(item) for item in targets])
+            self.maxlen = max(inpmaxlen,tarmaxlen)
 
-    def gen_tokens(self):
-        inputs = self.inputs
-        if self.eos_sos_token:
-            inputs = [f'{self.sos} {inp} {self.eos}' for inp in inputs]
-        inp_tokens = [sentence.split(' ') for sentence in inputs if sentence]
-        self.tokens = inp_tokens
-        return inp_tokens
+        else:
+            self.maxlen = maxlen
 
-    def create_vocab(self):
-        words = set()
-        for seq in self.tokens:
-            for word in seq:
-                if word not in words:
-                    words.add(word)
-        self.vocab = {w:i+1 for i,w in enumerate(words)}
-        self.vocab['[PAD]'] = 0
-        self.vocab_size = len(self.vocab.items())
-        return self.vocab
+        # cleaning data: 
+        self.inputs = self.custom_standardization(inputs) if remove_input_punc else inputs
+        self.targets = self.custom_standardization(targets) if remove_target_punc else targets
+        
+        # creating vvectorisers 
+        self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen)
+        self.targets_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen)
+        
+        # padding the taining data to the vectoriser to create tokens 
+        self.input_vectoriser.adapt(self.inputs)
+        self.targets_vectoriser.adapt(self.targets)
+
+    def format_dataset(self,inputs, targets):
+
+        inputs = self.input_vectoriser(inputs)
+        targets = self.targets_vectoriser(targets)
+
+        return ({"encoder_inputs": inputs, "decoder_inputs": targets[:, :-1],}, targets[:, 1:])
+
+
+    def get_Dataset(self,batch_size):
+        dataset = tf.data.Dataset.from_tensor_slices((self.inputs,self.targets))
+        dataset = dataset.batch(batch_size)
+        dataset = dataset.map(self.format_dataset)
+        dataset = dataset.shuffle(1024).prefetch(8).cache()
+        return dataset
     
-    def gen_sequences(self,):
-        self.sequences = [[self.vocab[token] for token in seq] for seq in self.tokens]
-        return self.sequences
-    
-    def pad_seq(self):
-        if self.max_len is None:
-            self.max_len = max([len(seq)for seq in self.sequences])
-        padded_seqs = []
-        for seq in self.sequences:
-            padded_array = np.zeros(self.max_len)
-            padded_array[:len(seq)] = seq[:self.max_len]
-            padded_seqs.append(padded_array)
-        return np.array(padded_seqs)
-    
-    def fullyProccess(self):
-        self.gen_tokens()
-        self.create_vocab()
-        self.gen_sequences()
-        return self.pad_seq()
+    def custom_standardization(self,input_string):
+        # Define a regular expression pattern to match only special characters
+        pattern = r"[^\w\[\] ]"
+        # Use regex.sub to remove all special characters except [ ], and space
+        return re.sub(pattern, "", input_string.lower())
 
+    def save_input_vectoriser(self,name):
+        config = {
+            'config' : self.input_vectoriser.get_config(),
+            'weights': self.input_vectoriser.get_weights()
+        }
+        pickle.dump(config,open(f'{name}.pkl','wb'))
+    
+    def save_target_vectoriser(self,name):
+        config = {
+            'config':self.targets_vectoriser.get_config(),
+            'weights': self.targets_vectoriser.get_weights()
+        }
 
+        pickle.dump(config,open(f'{name}.pkl','wb'))
+    
+
+    @classmethod
+    def load_vectoriser(cls,name):
+        # loading config
+        config = pickle.load(open(f'{name}','rb'))
+
+        # setting  intial config
+        vectoriser = TextVectorization().from_config(config['config'])
+        # setting initial weights
+        vectoriser.set_weights(config['weights'])
+        
+        return vectoriser
 
 
 
@@ -63,152 +89,221 @@ class DataProcessor():
 
 
 # positinal aware word embedding layer 
-class Positional_embedding(keras.layers.Layer):
-    # attributes = sequence length , embedded dim and vocab size
-    def __init__(self,seqeunce_length , embd_dim , vocab_sie, **kwargs):
+@keras.saving.register_keras_serializable()
+class PositionalEmbedding(layers.Layer):
+    def __init__(self, sequence_length, vocab_size, embed_dim, **kwargs):
         super().__init__(**kwargs)
-        self.vocab_size = vocab_sie
-        self.embd_dim = embd_dim
-        self.sequence_length = seqeunce_length
-        
-        # defining embedding layer 
-        self.token_embedding_layer = keras.layers.Embedding(
-            input_dim=self.vocab_size,
-            output_dim=self.embd_dim
+        self.token_embeddings = layers.Embedding(
+            input_dim=vocab_size, output_dim=embed_dim
         )
-        # positiona encoding layer 
-        self.positional_encoding = keras.layers.Embedding(
-            input_dim=self.sequence_length,
-            output_dim=self.embd_dim
+        self.position_embeddings = layers.Embedding(
+            input_dim=sequence_length, output_dim=embed_dim
         )
+        self.sequence_length = sequence_length
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
 
-    #  the call function makaes use of all the layers we dfined above
-    def call(self,inputs):
-        length = tf.shape(inputs) [-1] # takes the sequence length of the input for example (10 , 60) 60 = seqeunce length 
-        positions = tf.range(start=0,limit=length-1,delta=1) # creates a tensor with the same length as the sequence length we extacted above , with delta = 1 (step size = 1) example [1,2,3,..,length-1]
-        embedded_tokens = self.token_embedding_layer(inputs) # passing the inputs to an embedding layer to generate embedding representations 
-        embedded_positions = self.positional_encoding(positions)  # passing the positions tensor we generated above into the positinonal encoding layer 
-        positions_aware_embeddings = embedded_tokens + embedded_positions #adding positional encoding with the embedding representations 
-        return positions_aware_embeddings
+    def call(self, inputs):
+        length = tf.shape(inputs)[-1]
+        positions = tf.range(start=0, limit=length, delta=1)
+        embedded_tokens = self.token_embeddings(inputs)
+        embedded_positions = self.position_embeddings(positions)
+        return embedded_tokens + embedded_positions
 
-# transformer encoder layer
-class Transformer_encoder(keras.layers.Layer): # we inherit from keras layer class to make it a layer 
+    def compute_mask(self, inputs, mask=None):
+        return tf.math.not_equal(inputs, 0)
 
-    # first we deine all the layers anad then we use them in the call function attributes: embeddedd dim, dense layer dim , number off heads
-    def __init__(self,embd_dim,dense_dim,num_heads,**kwargs):
-        super().__init__(**kwargs)
-        # hyper parameters
-        self.embd_dim = embd_dim
-        self.dense_dim = dense_dim
-        self.num_heads = num_heads
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'sequence_length': self.sequence_length,
+            'vocab_size': self.vocab_size,
+            'embed_dim':self.embed_dim
+        })
 
-        # defining multiheaded self attention 
-        self.attention = keras.layers.MultiHeadAttention(
-            num_heads=self.num_heads,
-            key_dim=self.embd_dim
-        )
-
-        # defining the encoder's fully connected layer 
-        self.fully_connected = keras.Sequential(
-            [keras.layers.Dense(self.dense_dim,activation='relu'),keras.layers.Dense(embd_dim)]
-        )
-        
-        # defining the encoder add_and norm layers (1 and 2)
-        self.add_and_norm_1 = keras.layers.LayerNormalization()
-        self.add_and_norm_2 = keras.layers.LayerNormalization()
-
-        self.supports_masking =True
-
-    # connecting all the layers together here 
-    def call(self,inputs,mask= None):
-        if mask is not None:
-            padding_mask = tf.cast(mask[:,tf.newaxis,:],dtype='int32')
-        
-        # passing the input to the attention key, query anad value 
-        attention_output = self.attention(query = inputs, key = inputs , value = inputs, attention_mask = padding_mask)
-        
-        # passing the attention and the input to an add and norm layer 
-        fully_connected_input = self.add_and_norm_1(inputs+attention_output) #add and norm '1' ouput 
-        
-        # passing the add and norm ouput to a fully connected layer  
-        fully_connected_output = self.fully_connected(fully_connected_input)
-
-        # passing the fully connected layer output and the add and norm '1' output to a adad and norm and then thats the encoder output 
-        encoder_ouput = self.add_and_norm_2(fully_connected_input + fully_connected_output)
-        
-        return encoder_ouput
+        return config
     
 
-
-
-class Transformer_Decoder(keras.layers.Layer):
-    def __init__(self,latent_dim,embd_dim,num_heads,**kwargs):
+# transformer encoder layer
+@keras.saving.register_keras_serializable()
+class TransformerEncoder(layers.Layer):
+    def __init__(self, embed_dim, dense_dim, num_heads, **kwargs):
         super().__init__(**kwargs)
-        self.latent_dim = latent_dim
-        self.embd_dim = embd_dim
-        self.numm_heads = num_heads
-
-        self.attention_1 = keras.layers.MultiHeadAttention(
-            num_heads=self.numm_heads,
-            key_dim=embd_dim)
-        
-        self.attention_2 = keras.layers.MultiHeadAttention(
-            num_heads=self.numm_heads,
-            key_dim=self.embd_dim
+        self.embed_dim = embed_dim
+        self.dense_dim = dense_dim
+        self.num_heads = num_heads
+        self.attention = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=embed_dim
         )
-
-        self.fully_conncted  = keras.Sequential(
-            [
-                keras.layers.Dense(units=self.latent_dim,activation='relu'),
-                keras.layers.Dense(units=self.embd_dim)
-            ]
+        self.fully_connected = keras.Sequential(
+            [layers.Dense(dense_dim, activation="relu"), layers.Dense(embed_dim),]
         )
-
-        self.add_and_norm_1 = keras.layers.LayerNormalization()
-        self.add_and_norm_2 = keras.layers.LayerNormalization()
-        self.add_and_norm_3 = keras.layers.LayerNormalization()
-
+        self.layernorm_1 = layers.LayerNormalization()
+        self.layernorm_2 = layers.LayerNormalization()
+        # masking is used to handle variable length inputs 
         self.supports_masking = True
 
+    def call(self, inputs, mask=None):
+        padding_mask = None 
+        if mask is not None:
+            padding_mask = tf.cast(mask[:, tf.newaxis, :], dtype="int32")
+        attention_output = self.attention(
+            query=inputs, value=inputs, key=inputs, attention_mask=padding_mask
+        )
+        proj_input = self.layernorm_1(inputs + attention_output)
+        proj_output = self.fully_connected(proj_input)
+        return self.layernorm_2(proj_input + proj_output)
+    
+    # for saving the layer when saving the model 
+    def get_config(self):
+          config = super().get_config()
+          config.update(
+              {
+                'dense_dim': self.dense_dim,
+                'embed_dim':self.embed_dim,
+                'num_heads':self.num_heads
 
-        def call(self,inputs,encoder_ouput,mask=None):
-            causal_mask = self.get_causal_attention_mask(inputs)
-            if mask is not None:
-                padding_mask = tf.cast(mask[:,tf.newaxis,:])
-                padding_mask = tf.minimum(padding_mask,causal_mask)
-            
-            attention_1_output = self.attention_1(key=inputs , query=inputs , value=inputs , mask = causal_mask)
+              }
+                )
+          return config
 
-            addAndNormOut_1 = self.add_and_norm_1(inputs+attention_1_output)
-            
-            attention_2_output = self.attention_2(query = addAndNormOut_1, key = encoder_ouput, value = encoder_ouput, mask = padding_mask)
 
-            addAndNormOut_2 = self.add_and_norm_2(addAndNormOut_1,attention_2_output)
 
-            fully_connected_ouput = self.fully_conncted(addAndNormOut_2)
+@keras.saving.register_keras_serializable()
+class TransformerDecoder(layers.Layer):
+    def __init__(self, embed_dim, latent_dim, num_heads, **kwargs):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.latent_dim = latent_dim
+        self.num_heads = num_heads
+        self.attention_1 = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=embed_dim
+        )
+        self.attention_2 = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=embed_dim
+        )
+        self.dense_proj = keras.Sequential(
+            [layers.Dense(latent_dim, activation="relu"), layers.Dense(embed_dim),]
+        )
+        self.layernorm_1 = layers.LayerNormalization()
+        self.layernorm_2 = layers.LayerNormalization()
+        self.layernorm_3 = layers.LayerNormalization()
+        self.supports_masking = True
 
-            decoder_ouput = self.add_and_norm_3(addAndNormOut_2+fully_connected_ouput)
+    def call(self, inputs, encoder_outputs, mask=None):
+        causal_mask = self.get_causal_attention_mask(inputs)
+        if mask is not None:
+            padding_mask = tf.cast(mask[:, tf.newaxis, :], dtype="int32")
+            padding_mask = tf.minimum(padding_mask, causal_mask)
 
-            return decoder_ouput
-        def get_causal_attention_mask(self, inputs):
-            input_shape = tf.shape(inputs)
-            batch_size, sequence_length = input_shape[0], input_shape[1]
-            i = tf.range(sequence_length)[:, tf.newaxis]
-            j = tf.range(sequence_length)
-            mask = tf.cast(i >= j, dtype="int32")
-            mask = tf.reshape(mask, (1, input_shape[1], input_shape[1]))
-            mult = tf.concat(
-                [tf.expand_dims(batch_size, -1), tf.constant([1, 1], dtype=tf.int32)],
-                axis=0,
-            )
-            return tf.tile(mask, mult)
+        attention_output_1 = self.attention_1(
+            query=inputs, value=inputs, key=inputs, attention_mask=causal_mask
+        )
+        out_1 = self.layernorm_1(inputs + attention_output_1)
+
+        attention_output_2 = self.attention_2(
+            query=out_1,
+            value=encoder_outputs,
+            key=encoder_outputs,
+            attention_mask=padding_mask,
+        )
+        out_2 = self.layernorm_2(out_1 + attention_output_2)
+
+        proj_output = self.dense_proj(out_2)
+        return self.layernorm_3(out_2 + proj_output)
+
+    def get_causal_attention_mask(self, inputs):
+        input_shape = tf.shape(inputs)
+        batch_size, sequence_length = input_shape[0], input_shape[1]
+        i = tf.range(sequence_length)[:, tf.newaxis]
+        j = tf.range(sequence_length)
+        mask = tf.cast(i >= j, dtype="int32")
+        mask = tf.reshape(mask, (1, input_shape[1], input_shape[1]))
+        mult = tf.concat(
+            [tf.expand_dims(batch_size, -1), tf.constant([1, 1], dtype=tf.int32)],
+            axis=0,
+        )
+        return tf.tile(mask, mult)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'embed_dim':self.embed_dim,
+            'latent_dim': self.latent_dim,
+            'num_heads':self.num_heads
+        })
+        return config
+
+class Transformer():
+    def __init__(self,seq_length,vocab_size,latent_dim,embd_dim,num_heads):
+
+        encoder_inputs = keras.Input(shape=(None,), dtype="int64", name="encoder_inputs")
+        x = PositionalEmbedding(seq_length, vocab_size, embd_dim)(encoder_inputs)
+        encoder_outputs = TransformerEncoder(embd_dim, latent_dim, num_heads)(x)
+        encoder = keras.Model(encoder_inputs, encoder_outputs)
+
+        decoder_inputs = keras.Input(shape=(None,), dtype="int64", name="decoder_inputs")
+        encoded_seq_inputs = keras.Input(shape=(None, embd_dim), name="decoder_state_inputs")
+        x = PositionalEmbedding(seq_length, vocab_size, embd_dim)(decoder_inputs)
+        x = TransformerDecoder(embd_dim, latent_dim, num_heads)(x, encoded_seq_inputs)
+        x = layers.Dropout(0.5)(x)
+        decoder_outputs = layers.Dense(vocab_size, activation="softmax")(x)
+        decoder = keras.Model([decoder_inputs, encoded_seq_inputs], decoder_outputs)
+
+        decoder_outputs = decoder([decoder_inputs, encoder_outputs])
         
+        self.Transormer_model = keras.Model(
+            [encoder_inputs, decoder_inputs], decoder_outputs, name="transformer"
+        )
+
+    def model(self):
+        return self.Transormer_model
+
+    
+    def save_transformer(self,name):
+        self.model().save(f'{name}.h5')
 
 
+# methods 
+    @classmethod
+    def answer(cls,inpu_seq,model,inp_vocab,tar_vocab,max_len):
+        vectorised_input = inpu_seq.split(' ')
+        print('split inp:',vectorised_input)
+        vectorised_input = [inp_vocab.get(word,0) for word in vectorised_input if word]
+        print(vectorised_input)
+        vectorised_input = pad_sequences([vectorised_input],maxlen=max_len,padding='post')
+        print(vectorised_input)
+        reversed_tar_vocab = {i:w for w,i in tar_vocab.items()}
+        decoded_sentence = '[start]'
+        
+        for i in range(max_len):
+            vectorised_target_sentence = decoded_sentence.split(' ')
+            vectorised_target_sentence = [tar_vocab.get(word,0) for word in vectorised_target_sentence if word]
+            print('decoded',vectorised_target_sentence)
+            vectorised_target_sentence = pad_sequences([vectorised_target_sentence],max_len,padding='post')
 
+            predictions = model([vectorised_input,vectorised_target_sentence])
+            print('predictions: ', predictions)
+            predicted_token = np.argmax(predictions[0, i, :])
+            print(predicted_token)
+            word = reversed_tar_vocab.get(predicted_token, 'UNK')
+            decoded_sentence += " "+ word
 
-inputs = ['ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne we','ehloewbf dbbwe hhw fbbewfj weifne webthis sould now be thee longest one out of all of them','ehloewbf dbbwe hhw fbbewfj weifne we',]
+            if word =='[end]':
+                break
+        return(decoded_sentence)
 
-dp = DataProcessor(inputs=inputs,eos_sos_token=True,max_len=5)
-print(dp.fullyProccess())
-print(dp.gen_sequences())
+    @classmethod
+    def Chat(cls,model,inp_vocab,tar_vocab,max_len):
+        while True:
+            user_message = input('------>')
+            print('model==>',cls.answer(user_message,model,inp_vocab,tar_vocab,max_len))
+
+    @classmethod
+    def load_transformer(cls,name):
+        model = keras.models.load_model(name)
+        return model
+    
+    
+
+   
