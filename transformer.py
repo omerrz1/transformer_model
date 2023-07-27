@@ -11,33 +11,49 @@ from keras.layers import TextVectorization
 
 # create a class for data  proccessing
 class DataProcessor():
-    def __init__(self,inputs,targets,maxlen = None, remove_input_punc= False, remove_target_punc = False ):
+    def __init__(self,inputs,targets,maxlen = None, remove_target_punc = False ,remove_input_punc =False, single_vectoriser=False ):
         
         if maxlen is None:
             inpmaxlen = max([len(item) for item in inputs])
             tarmaxlen = max([len(item) for item in targets])
             self.maxlen = max(inpmaxlen,tarmaxlen)
-
         else:
             self.maxlen = maxlen
 
         # cleaning data: 
-        self.inputs = self.custom_standardization(inputs) if remove_input_punc else inputs
+        self.inputs = [self.custom_standardization(text) for text in inputs if text] if remove_input_punc else inputs
         self.targets = [f'[start] {sentence} [end]' for sentence in targets]
-        self.targets = self.custom_standardization(targets) if remove_target_punc else self.targets
+        self.targets = [self.custom_standardization(text) for text in self.targets] if remove_target_punc else self.targets
         
         # creating vvectorisers 
-        self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen)
-        self.targets_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen)
+        # check if the user wants onlyy one vectoriser 
+        self.single_vec = single_vectoriser
+        if single_vectoriser:
+            self.vectoriser = TextVectorization(output_mode='int',output_sequence_length=maxlen,standardize='lower')
+        else:
+            self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen,standardize='lower')
+            self.targets_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen+1,standardize='lower')
         
-        # padding the taining data to the vectoriser to create tokens 
-        self.input_vectoriser.adapt(self.inputs)
-        self.targets_vectoriser.adapt(self.targets)
+        # passing the taining data to the vectoriser to create tokens 
+        if single_vectoriser:
+            self.vectoriser.adapt([*self.inputs,*self.targets])
+        else:
+            self.input_vectoriser.adapt(self.inputs)
+            self.targets_vectoriser.adapt(self.targets)
 
+        # getting vocab_size
+        if single_vectoriser:
+            self.vocab_size = len(self.vectoriser.get_vocabulary())
+        else:
+            self.vocab_size = len(self.targets_vectoriser.get_vocabulary())
+        
     def format_dataset(self,inputs, targets):
-
-        inputs = self.input_vectoriser(inputs)
-        targets = self.targets_vectoriser(targets)
+        if self.single_vec:
+            inputs = self.vectoriser(inputs)
+            targets = self.vectoriser(targets)
+        else:
+            inputs = self.input_vectoriser(inputs)
+            targets = self.targets_vectoriser(targets)
 
         return ({"encoder_inputs": inputs, "decoder_inputs": targets[:, :-1],}, targets[:, 1:])
 
@@ -46,13 +62,12 @@ class DataProcessor():
         dataset = tf.data.Dataset.from_tensor_slices((self.inputs,self.targets))
         dataset = dataset.batch(batch_size)
         dataset = dataset.map(self.format_dataset)
-        dataset = dataset.shuffle(1024).prefetch(8).cache()
+        dataset = dataset.shuffle(1024).prefetch(16).cache()
         return dataset
     
     def custom_standardization(self,input_string):
-        # Define a regular expression pattern to match only special characters
+
         pattern = r"[^\w\[\] ]"
-        # Use regex.sub to remove all special characters except [ ], and space
         return re.sub(pattern, "", input_string.lower())
 
     def save_input_vectoriser(self,name):
@@ -70,6 +85,13 @@ class DataProcessor():
 
         pickle.dump(config,open(f'{name}.pkl','wb'))
     
+    def save_vectoriser(self,name):
+        config = {
+            'config':self.vectoriser.get_config(),
+            'weights':self.vectoriser.get_weights()
+        }
+
+        pickle.dump(config,open(f'{name}.pkl','wb'))
 
     @classmethod
     def load_vectoriser(cls,name):
@@ -236,7 +258,7 @@ class TransformerDecoder(layers.Layer):
 
 class Transformer():
     def __init__(self,seq_length,vocab_size,latent_dim,embd_dim,num_heads):
-
+        
         encoder_inputs = keras.Input(shape=(None,), dtype="int64", name="encoder_inputs")
         x = PositionalEmbedding(seq_length, vocab_size, embd_dim)(encoder_inputs)
         encoder_outputs = TransformerEncoder(embd_dim, latent_dim, num_heads)(x)
@@ -263,19 +285,19 @@ class Transformer():
     def save_transformer(self,name):
         self.model().save(f'{name}.h5')
 
-
 # methods 
     @classmethod
-    def answer(input_sentence,maxlen,input_vectoriser,target__vectoriser,model):
-
-        targ_vocab = target__vectoriser.get_vocabulary()
+    def answer(cls,input_sentence,maxlen,input_vectoriser,target_vectoriser,model):
+        
+        targ_vocab = target_vectoriser.get_vocabulary()
         targ_index_lookup = dict(zip(range(len(targ_vocab)), targ_vocab))
 
         tokenized_input_sentence = input_vectoriser([input_sentence])
         decoded_sentence = "[start]"
 
         for i in range(maxlen):
-            tokenized_target_sentence = target__vectoriser([decoded_sentence])[:, :-1]
+            tokenized_target_sentence = target_vectoriser([decoded_sentence])[:, :-1]
+
             predictions = model([tokenized_input_sentence, tokenized_target_sentence])
 
             sampled_token_index = np.argmax(predictions[0, i, :])
@@ -284,6 +306,7 @@ class Transformer():
 
             if sampled_token == "[end]":
                 break
+
         return decoded_sentence
 
     @classmethod
