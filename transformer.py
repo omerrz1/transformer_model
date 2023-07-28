@@ -27,34 +27,21 @@ class DataProcessor():
         
         # creating vvectorisers 
         # check if the user wants onlyy one vectoriser 
-        self.single_vec = single_vectoriser
-        if single_vectoriser:
-            self.vectoriser = TextVectorization(output_mode='int',output_sequence_length=maxlen,standardize='lower')
-        else:
-            self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen,standardize='lower')
-            self.targets_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen+1,standardize='lower')
+
+        self.input_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen,standardize='lower')
+        self.targets_vectoriser = TextVectorization(output_mode='int',output_sequence_length=self.maxlen+1,standardize='lower')
         
         # passing the taining data to the vectoriser to create tokens 
-        if single_vectoriser:
-            self.vectoriser.adapt([*self.inputs,*self.targets])
-        else:
-            self.input_vectoriser.adapt(self.inputs)
-            self.targets_vectoriser.adapt(self.targets)
+
+        self.input_vectoriser.adapt(self.inputs)
+        self.targets_vectoriser.adapt(self.targets)
 
         # getting vocab_size
-        if single_vectoriser:
-            self.vocab_size = len(self.vectoriser.get_vocabulary())
-        else:
-            self.vocab_size = len(self.targets_vectoriser.get_vocabulary())
+        self.vocab_size = len(self.targets_vectoriser.get_vocabulary())
         
     def format_dataset(self,inputs, targets):
-        if self.single_vec:
-            inputs = self.vectoriser(inputs)
-            targets = self.vectoriser(targets)
-        else:
-            inputs = self.input_vectoriser(inputs)
-            targets = self.targets_vectoriser(targets)
-
+        inputs = self.input_vectoriser(inputs)
+        targets = self.targets_vectoriser(targets)
         return ({"encoder_inputs": inputs, "decoder_inputs": targets[:, :-1],}, targets[:, 1:])
 
 
@@ -84,14 +71,6 @@ class DataProcessor():
         }
 
         pickle.dump(config,open(f'{name}.pkl','wb'))
-    
-    def save_vectoriser(self,name):
-        config = {
-            'config':self.vectoriser.get_config(),
-            'weights':self.vectoriser.get_weights()
-        }
-
-        pickle.dump(config,open(f'{name}.pkl','wb'))
 
     @classmethod
     def load_vectoriser(cls,name):
@@ -104,7 +83,6 @@ class DataProcessor():
         vectoriser.set_weights(config['weights'])
         
         return vectoriser
-
 
 
 
