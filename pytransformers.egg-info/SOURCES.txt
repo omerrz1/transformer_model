@@ -1,0 +1,10 @@
+LICENSE
+README.md
+setup.py
+pytransformers/__init__.py
+pytransformers/transformer.py
+pytransformers.egg-info/PKG-INFO
+pytransformers.egg-info/SOURCES.txt
+pytransformers.egg-info/dependency_links.txt
+pytransformers.egg-info/requires.txt
+pytransformers.egg-info/top_level.txt

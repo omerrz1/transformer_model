@@ -1,3 +1,23 @@
+Metadata-Version: 2.1
+Name: pytransformers
+Version: 0.0.8
+Summary: create transformer models (articture behind chat GPTand other large language models)
+Home-page: UNKNOWN
+Author: omer mustafa
+Author-email: <omermustafacontact@gmail.com>
+License: UNKNOWN
+Keywords: python,ai,Chat GPT,transformer model,transformers,bert,seq2seq,sequence to sequence,classification,chat bot,deep learning,keras
+Platform: UNKNOWN
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Microsoft :: Windows
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
 ## PyTransformers 
 
 PyTransformers is a powerful library for data processing and implementing Transformer-based models using Keras and TensorFlow. This library simplifies the data preprocessing steps and allows you to build and train Transformer models for various natural language processing tasks.
@@ -132,3 +152,4 @@ Transformer.train(model=model, input_vectoriser=input_vec, target_vectoriser=tar
 ```
 ## Contributing
 If you want to contribute to the pytransformers library, feel free to email me 'omermustafacontact@gmail.com'
+
