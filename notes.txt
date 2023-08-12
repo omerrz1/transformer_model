@@ -1,0 +1,16 @@
+my_library/
+├── my_library/
+│   ├── __init__.py
+│   ├── module1.py
+│   └── module2.py
+├── README.md
+└── setup.py
+
+
+
+/comands 
+
+python setup.py bdist_wheel sdist 
+
+
+twine upload dist/*

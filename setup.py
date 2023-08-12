@@ -3,8 +3,8 @@ from setuptools import setup, find_packages
 with open('README.md','r') as f:
     long_description = f.read()
 
-VERSION = '0.0.8'
-DESCRIPTION = 'create transformer models (articture behind chat GPTand other large language models)'
+VERSION = '0.1.0'
+DESCRIPTION = 'create transformer models (Architecture behind chat GPT and other large language models)'
 
 
 # Setting up

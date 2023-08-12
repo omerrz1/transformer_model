@@ -1,7 +1,7 @@
 Metadata-Version: 2.1
 Name: pytransformers
-Version: 0.0.8
-Summary: create transformer models (articture behind chat GPTand other large language models)
+Version: 0.1.0
+Summary: create transformer models (Architecture behind chat GPT and other large language models)
 Home-page: UNKNOWN
 Author: omer mustafa
 Author-email: <omermustafacontact@gmail.com>
@@ -42,6 +42,7 @@ The `DataProcessor` class in pytransformers is designed for data preprocessing a
 | `remove_target_punc`| Boolean value to indicate whether to remove punctuation from the target sentences during data processing. |
 | `remove_input_punc` | Boolean value to indicate whether to remove punctuation from the input sentences during data processing.  |
 
+
 #### Methods
 
 | Method                 | Description                                                                        |
@@ -64,6 +65,8 @@ The `Transformer` class combines the encoder and decoder layers to create the Tr
 | `latent_dim`    | Latent dimension for the model.        |
 | `embd_dim`      | Embedding dimension for the model.     |
 | `num_heads`     | Number of attention heads in the model.|
+| `EncoderUnits` | Number of encoder layers in the model.|
+| `DecoderUnits`  | Number of deocder layers in the model.|
 
 #### Methods
 
@@ -100,10 +103,11 @@ seq_len = dp.maxlen
 embd_dim = 512
 dense_dim = 8000
 vocab_size = dp.vocab_size
+encoder_units = 6
+decoder_units = 12
 num_heads = 16
 
-transformer = Transformer(seq_length=seq_len, vocab_size=vocab_size, latent_dim=dense_dim, embd_dim=embd_dim, num_heads=num_heads)
-
+transformer =  Transformer(vocab_size=vocab_size,embd_dim=embd_dim,seq_length=seq_len,latent_dim=dense_dim,num_heads=num_heads,DecoderUnits=decoder_units,EncoderUnits=encoder_units)
 model = transformer.model()
 model.summary()
 model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -125,11 +129,10 @@ model = keras.models.load_model('transformer_model.h5')
 # Run prediction with the correct 'max_len' value
 max_len = 100
 
-result = Transformer.Chat(input_vectoriser=input_vocab, target_vectoriser=tar_vocab, model=model, maxlen=max_len)
+Transformer.Chat(input_vectoriser=input_vocab, target_vectoriser=tar_vocab, model=model, maxlen=max_len)
 
-print(result)
 
-# Retraining the Model
+# fine-tuning the Model
 
 # Load example data
 data = pd.DataFrame({
@@ -147,9 +150,13 @@ model = Transformer.load_transformer('transformer_model.h5')
 
 # Train the model with new data
 Transformer.train(model=model, input_vectoriser=input_vec, target_vectoriser=target_vec, batch_size=128, epochs=5, inputs=inputs, targets=targets, name='transformer_model')
+# Train method will train the model and save it to the local directory
 
-# Please make sure to replace 'python.csv' with the path to your own dataset when retraining the model.
 ```
+# News:
+### OBert model coming soon !!
+OBERT is a model that closely resembles the BERT architecture but incorporates a few modifications. It is designed to serve the purposes of classification and predicting the next token in a sequence.
+
 ## Contributing
-If you want to contribute to the pytransformers library, feel free to email me 'omermustafacontact@gmail.com'
+If you want to contribute to the pytransformers library, feel free to email me omermustafacontact@gmail.com
 

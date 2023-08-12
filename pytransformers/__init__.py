@@ -3,3 +3,5 @@ from pytransformers.transformer import DataProcessor
 from pytransformers.transformer import PositionalEmbedding
 from pytransformers.transformer import TransformerEncoder
 from pytransformers.transformer import TransformerDecoder
+from pytransformers.transformer import Encoder 
+from pytransformers.transformer import Decoder

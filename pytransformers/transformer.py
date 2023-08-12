@@ -49,7 +49,7 @@ class DataProcessor():
         dataset = tf.data.Dataset.from_tensor_slices((self.inputs,self.targets))
         dataset = dataset.batch(batch_size)
         dataset = dataset.map(self.format_dataset)
-        dataset = dataset.shuffle(1024).prefetch(16).cache()
+        dataset = dataset.shuffle(1024).prefetch(tf.data.AUTOTUNE).cache()
         return dataset
     
     def custom_standardization(self,input_string):
@@ -157,14 +157,13 @@ class TransformerEncoder(layers.Layer):
     # for saving the layer when saving the model 
     def get_config(self):
           config = super().get_config()
-          config.update(
-              {
+          config.update({
+              
                 'dense_dim': self.dense_dim,
                 'embed_dim':self.embed_dim,
                 'num_heads':self.num_heads
 
-              }
-                )
+              })
           return config
 
 
@@ -234,30 +233,84 @@ class TransformerDecoder(layers.Layer):
         })
         return config
 
+@keras.saving.register_keras_serializable()
+class Encoder(layers.Layer):
+    def __init__(self,embd_dim,num_heads,dense_dim,units,**kwargs):
+        super().__init__(**kwargs)
+        self.num_heads = num_heads
+        self.embd_dim = embd_dim
+        self.dense_dim = dense_dim
+        self.units = units
+        self.EncoderLayers = [TransformerEncoder(num_heads=self.num_heads,embed_dim=self.embd_dim,dense_dim=self.dense_dim) for _ in range(units)]
+    
+    def call(self,inputs,mask=None):
+        # passing the inputs to the encoder layers in parallel
+        outputs = [layer(inputs,mask) for layer in self.EncoderLayers]
+        # concatenating the ouputs of all encoder layers 
+        concat_output = layers.concatenate(outputs, axis=-1)
+        return concat_output
+        
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'num_heads':self.num_heads,
+            'dense_dim': self.dense_dim,
+            'embd_dim':self.embd_dim,
+            'units':self.units
+        })
+        return config
+
+@keras.saving.register_keras_serializable()
+class Decoder (layers.Layer):
+    def __init__(self, embed_dim, latent_dim, num_heads,units,**kwargs):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.dense = latent_dim
+        self.num_heads = num_heads
+        self.units = units
+        self.DecoderLayers = [TransformerDecoder(embed_dim=self.embed_dim,latent_dim=self.dense,num_heads=self.num_heads) for _ in range(units)]
+    def call(self,inputs,encoder_output,mask=None):
+        # generating all outputs from all decoder layers 
+        outputs = [layer(inputs=inputs,encoder_outputs=encoder_output,mask=mask) for layer in self.DecoderLayers]
+        
+        # concatenating the ouputs of all the decoder layers 
+        concat_output = layers.concatenate(outputs,axis=-1)
+        return concat_output
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'embed_dim':self.embed_dim,
+            'latent_dim': self.dense,
+            'num_heads':self.num_heads,
+            'units': self.units
+        })
+        return config
+    
+
 class Transformer():
-    def __init__(self,seq_length,vocab_size,latent_dim,embd_dim,num_heads):
-        
+    def __init__(self, seq_length, vocab_size, latent_dim, embd_dim, num_heads, EncoderUnits, DecoderUnits):
+
         encoder_inputs = keras.Input(shape=(None,), dtype="int64", name="encoder_inputs")
-        x = PositionalEmbedding(seq_length, vocab_size, embd_dim)(encoder_inputs)
-        encoder_outputs = TransformerEncoder(embd_dim, latent_dim, num_heads)(x)
-        encoder = keras.Model(encoder_inputs, encoder_outputs)
-
         decoder_inputs = keras.Input(shape=(None,), dtype="int64", name="decoder_inputs")
-        encoded_seq_inputs = keras.Input(shape=(None, embd_dim), name="decoder_state_inputs")
-        x = PositionalEmbedding(seq_length, vocab_size, embd_dim)(decoder_inputs)
-        x = TransformerDecoder(embd_dim, latent_dim, num_heads)(x, encoded_seq_inputs)
-        x = layers.Dropout(0.5)(x)
-        decoder_outputs = layers.Dense(vocab_size, activation="softmax")(x)
-        decoder = keras.Model([decoder_inputs, encoded_seq_inputs], decoder_outputs)
 
-        decoder_outputs = decoder([decoder_inputs, encoder_outputs])
+        encoder_embedding = PositionalEmbedding(seq_length, vocab_size, embd_dim)(encoder_inputs)
+        encoder_outputs = Encoder(embd_dim=embd_dim, dense_dim=latent_dim, num_heads=num_heads, units=EncoderUnits)(encoder_embedding)
+
+        decoder_embedding = PositionalEmbedding(seq_length, vocab_size, embd_dim)(decoder_inputs)
+        decoder_outputs = Decoder(embd_dim, latent_dim, num_heads, units=DecoderUnits)(decoder_embedding, encoder_outputs)
+
+        Dropout_output = layers.Dropout(0.1)(decoder_outputs)
         
-        self.Transormer_model = keras.Model(
-            [encoder_inputs, decoder_inputs], decoder_outputs, name="transformer"
+        dense = layers.Dense(units=latent_dim,activation='relu')(Dropout_output)
+        final_outputs = layers.Dense(vocab_size, activation="softmax")(dense)
+
+        self.Transformer_model = keras.Model(
+            [encoder_inputs, decoder_inputs], final_outputs, name="transformer"
         )
 
     def model(self):
-        return self.Transormer_model
+        return self.Transformer_model
 
     
     def save_transformer(self,name):
@@ -284,7 +337,9 @@ class Transformer():
 
             if sampled_token == "[end]":
                 break
-
+        
+        decoded_sentence = decoded_sentence.split(' ')[1:]
+        decoded_sentence = ' '.join(decoded_sentence)
         return decoded_sentence
 
     @classmethod
@@ -316,5 +371,3 @@ class Transformer():
         model.fit(get_Dataset(),epochs=epochs)
         model.save(f'{name}.h5')
     
-
-   
